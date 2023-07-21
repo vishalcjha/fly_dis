@@ -1,19 +1,42 @@
 #![allow(dead_code, unused_variables)]
 
+use anyhow::Ok;
 use serde::{Deserialize, Serialize};
 
+pub type Result<T> = std::result::Result<T, anyhow::Error>;
+pub struct ParseError(String);
 #[derive(Debug, Serialize, Deserialize, Clone, Hash, PartialEq, Eq)]
 pub struct Message<T> {
     pub src: String,
     #[serde(rename = "dest")]
     pub dst: String,
-    #[serde(flatten)]
     pub body: Payload<T>,
 }
 
 impl<T> Message<T> {
-    fn new(src: String, dst: String, body: Payload<T>) -> Self {
+    pub fn new(src: String, dst: String, body: Payload<T>) -> Self {
         Message { src, dst, body }
+    }
+}
+
+pub trait Handler<T> {
+    fn handle(&self, message: &Message<T>) -> Result<Message<T>>;
+}
+
+impl Handler<Init> for Init {
+    fn handle(&self, message: &Message<Init>) -> Result<Message<Init>> {
+        let init_ok = Init::InitOk {
+            in_reply_to: message.body.msg_id.unwrap_or(1),
+        };
+        let message = Message::new(
+            message.dst.clone(),
+            message.src.clone(),
+            Payload {
+                data: init_ok,
+                msg_id: None,
+            },
+        );
+        Ok(message)
     }
 }
 
@@ -25,8 +48,8 @@ pub struct Payload<T> {
 }
 
 impl<T> Payload<T> {
-    fn new(data: T) -> Self {
-        Payload { data, msg_id: None }
+    pub fn new(data: T, msg_id: Option<usize>) -> Self {
+        Payload { data, msg_id }
     }
 }
 
@@ -53,6 +76,7 @@ mod tests {
             node_ids: vec!["n1".to_string(), "n2".to_string(), "n3".to_string()],
         };
         let serde_init_message = serde_json::to_string(&init_message).unwrap();
+        println!("{}", serde_init_message);
         assert_eq!(
             r#"{"type":"init","node_id":"n3","node_ids":["n1","n2","n3"]}"#,
             serde_init_message
@@ -65,8 +89,9 @@ mod tests {
         );
 
         let serde_message_with_body = serde_json::to_string(&message).unwrap();
+        println!("{}", serde_message_with_body);
         assert_eq!(
-            r#"{"src":"n1","dest":"c2","type":"init","node_id":"n3","node_ids":["n1","n2","n3"],"msg_id":null}"#,
+            r#"{"src":"n1","dest":"c2","body":{"type":"init","node_id":"n3","node_ids":["n1","n2","n3"],"msg_id":null}}"#,
             serde_message_with_body
         );
     }
