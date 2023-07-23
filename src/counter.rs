@@ -10,7 +10,6 @@ use std::{
 
 use anyhow::Ok;
 use serde::{Deserialize, Serialize};
-use uuid::Uuid;
 
 use crate::{
     message::{self, Handler, Init, Message, Payload},
@@ -29,7 +28,7 @@ pub enum Counter {
 
 #[derive(Debug, Clone)]
 pub enum Internal {
-    TriggerDispatch { node_id: String, thread_id: String },
+    TriggerDispatch,
     TerminateDispatcher,
 }
 
@@ -46,20 +45,13 @@ pub struct CounterNode {
     current_count: Cell<usize>,
     other_node_count_map: RefCell<HashMap<String, usize>>,
     gossip_trigger_task: RefCell<Option<PeriodicThread>>,
-    thread_id: String,
 }
 
 impl CounterNode {
     pub fn new(node_id: String, all_node_ids: Vec<String>, tx: Sender<ExternalInternal>) -> Self {
-        let cloned_node_id = node_id.clone();
-        let thread_id = Uuid::new_v4().to_string();
-        let thread_id_clone = thread_id.clone();
         let gossip_trigger_task = PeriodicThread::new(
             move || {
-                tx.send(ExternalInternal::Internal(Internal::TriggerDispatch {
-                    node_id: cloned_node_id.clone(),
-                    thread_id: thread_id_clone.clone(),
-                }))?;
+                tx.send(ExternalInternal::Internal(Internal::TriggerDispatch {}))?;
                 Ok(())
             },
             Duration::from_secs(1),
@@ -75,7 +67,6 @@ impl CounterNode {
             current_count: Cell::new(0),
             other_node_count_map: RefCell::new(other_node_count_map),
             gossip_trigger_task: RefCell::new(Some(gossip_trigger_task)),
-            thread_id: thread_id,
         }
     }
 
@@ -151,7 +142,7 @@ impl Handler<ExternalInternal> for CounterNode {
                         Counter::AddOk { in_reply_to },
                     ))
                 }
-                Counter::AddOk { .. } => None, // Some(Message::to_response(message, Counter::AddOk {})),
+                Counter::AddOk { .. } => None,
                 Counter::Read => {
                     let total_count = self.other_node_count_map.borrow().values().sum::<usize>();
                     let in_reply_to = message.body.msg_id.unwrap_or(1);
@@ -163,10 +154,7 @@ impl Handler<ExternalInternal> for CounterNode {
                         },
                     ))
                 }
-                Counter::ReadOk { .. } => {
-                    // Some(Message::to_response(message, Counter::ReadOk { value }))
-                    None
-                }
+                Counter::ReadOk { .. } => None,
                 Counter::Current { value } => {
                     // println!(
                     //     "Received {} for node {} with map {:?}",
@@ -190,26 +178,24 @@ impl Handler<ExternalInternal> for CounterNode {
                     }
                     None
                 }
-                Internal::TriggerDispatch { node_id, thread_id } => {
-                    if node_id == self.node_id && thread_id == self.thread_id {
-                        let current_message = Counter::Current {
-                            value: self.current_count.get(),
-                        };
-                        for other in self.all_node_ids.iter() {
-                            if *other == self.node_id {
-                                continue;
-                            }
-                            let current_message = Message::new(
-                                self.node_id.clone(),
-                                other.clone(),
-                                Payload {
-                                    data: current_message.clone(),
-                                    msg_id: None,
-                                },
-                            );
-                            serde_json::to_writer(&mut *writer, &current_message)?;
-                            writer.write_all(b"\n")?;
+                Internal::TriggerDispatch => {
+                    let current_message = Counter::Current {
+                        value: self.current_count.get(),
+                    };
+                    for other in self.all_node_ids.iter() {
+                        if *other == self.node_id {
+                            continue;
                         }
+                        let current_message = Message::new(
+                            self.node_id.clone(),
+                            other.clone(),
+                            Payload {
+                                data: current_message.clone(),
+                                msg_id: None,
+                            },
+                        );
+                        serde_json::to_writer(&mut *writer, &current_message)?;
+                        writer.write_all(b"\n")?;
                     }
                     None
                 }
