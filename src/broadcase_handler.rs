@@ -2,7 +2,7 @@
 use std::{
     cell::{Cell, RefCell},
     collections::{HashMap, HashSet},
-    io,
+    io::{self, BufRead},
     sync::{
         atomic::AtomicBool,
         mpsc::{channel, Receiver, Sender},
@@ -12,10 +12,12 @@ use std::{
     time::Duration,
 };
 
+use anyhow::Ok;
+
 use serde::{Deserialize, Serialize};
 use serde_with::DurationMilliSeconds;
 
-use crate::message::{self, Handler, Message, Payload, Result};
+use crate::message::{self, Handler, Init, Message, Payload, Result};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -90,9 +92,56 @@ impl BroadcastNode {
             thread::park_timeout(Duration::from_millis(500));
         })
     }
+
+    pub fn main_loop() -> message::Result<()> {
+        let mut stdin = std::io::stdin().lock();
+        let mut init_message = String::new();
+        stdin.read_line(&mut init_message)?;
+        let mut stdout = std::io::stdout().lock();
+
+        let init_message = serde_json::from_str::<Message<Init>>(&init_message)?;
+        let _ = init_message
+            .body
+            .data
+            .handle(&mut stdout, init_message.clone())?;
+
+        let (tx, rx) = channel();
+
+        drop(stdin);
+        let tx_cloned = tx.clone();
+        let join_handler = thread::spawn(move || {
+            let stdin = std::io::stdin().lock();
+            for line in stdin.lines() {
+                let incoming = line?.parse::<Message<Broadcast>>()?;
+                tx_cloned.send(incoming)?;
+            }
+            tx_cloned.send(Message {
+                src: "Self".to_string(),
+                dst: "Self".to_string(),
+                body: Payload::new(Broadcast::Quit, None),
+            })?;
+            Ok(())
+        });
+
+        let broadcast_node = BroadcastNode::new(
+            match init_message.body.data {
+                Init::Init { node_id, .. } => node_id.clone(),
+                _ => panic!("First message should be of type echo"),
+            },
+            tx,
+        );
+
+        for message in rx {
+            broadcast_node.handle(&mut stdout, message)?;
+        }
+
+        let _ = join_handler.join().expect("Main panicked");
+
+        Ok(())
+    }
 }
 
-impl Handler<Broadcast> for BroadcastNode {
+impl Handler<Message<Broadcast>> for BroadcastNode {
     fn handle(
         &self,
         writer: &mut dyn io::Write,

@@ -34,10 +34,10 @@ impl<T> Message<T> {
 }
 
 pub trait Handler<T> {
-    fn handle(&self, writer: &mut dyn io::Write, message: Message<T>) -> Result<()>;
+    fn handle(&self, writer: &mut dyn io::Write, message: T) -> Result<()>;
 }
 
-impl Handler<Init> for Init {
+impl Handler<Message<Init>> for Init {
     fn handle(&self, writer: &mut dyn io::Write, message: Message<Init>) -> Result<()> {
         let init_ok = Init::InitOk {
             in_reply_to: message.body.msg_id.unwrap_or(1),

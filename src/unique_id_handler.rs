@@ -5,7 +5,7 @@ use std::{cell::Cell, io::Write};
 use anyhow::Ok;
 use serde::{Deserialize, Serialize};
 
-use crate::message::{self, Handler, Payload};
+use crate::message::{self, Handler, Message, Payload};
 
 #[derive(Debug, Serialize, Clone, Deserialize, Hash, PartialEq, Eq)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -29,12 +29,8 @@ impl UniqueIdNode {
     }
 }
 
-impl Handler<Generate> for UniqueIdNode {
-    fn handle(
-        &self,
-        writer: &mut dyn Write,
-        message: message::Message<Generate>,
-    ) -> message::Result<()> {
+impl Handler<Message<Generate>> for UniqueIdNode {
+    fn handle(&self, writer: &mut dyn Write, message: Message<Generate>) -> message::Result<()> {
         let generate_response = match message.body.data {
             Generate::Generate => {
                 let current_processed_id = self.processed_id_count.get();

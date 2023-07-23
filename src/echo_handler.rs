@@ -25,7 +25,7 @@ impl EchoNode {
     }
 }
 
-impl Handler<Echo> for EchoNode {
+impl Handler<Message<Echo>> for EchoNode {
     fn handle(
         &self,
         writer: &mut dyn io::Write,
