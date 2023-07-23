@@ -1,7 +1,8 @@
 #![allow(dead_code, unused_variables)]
 
-use anyhow::Ok;
-use serde::{Deserialize, Serialize};
+use std::{io, str::FromStr};
+
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
 pub type Result<T> = std::result::Result<T, anyhow::Error>;
 pub struct ParseError(String);
@@ -11,33 +12,6 @@ pub struct Message<T> {
     #[serde(rename = "dest")]
     pub dst: String,
     pub body: Payload<T>,
-}
-
-impl<T> Message<T> {
-    pub fn new(src: String, dst: String, body: Payload<T>) -> Self {
-        Message { src, dst, body }
-    }
-}
-
-pub trait Handler<T> {
-    fn handle(&self, message: &Message<T>) -> Result<Message<T>>;
-}
-
-impl Handler<Init> for Init {
-    fn handle(&self, message: &Message<Init>) -> Result<Message<Init>> {
-        let init_ok = Init::InitOk {
-            in_reply_to: message.body.msg_id.unwrap_or(1),
-        };
-        let message = Message::new(
-            message.dst.clone(),
-            message.src.clone(),
-            Payload {
-                data: init_ok,
-                msg_id: None,
-            },
-        );
-        Ok(message)
-    }
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Hash, PartialEq, Eq)]
@@ -53,6 +27,35 @@ impl<T> Payload<T> {
     }
 }
 
+impl<T> Message<T> {
+    pub fn new(src: String, dst: String, body: Payload<T>) -> Self {
+        Message { src, dst, body }
+    }
+}
+
+pub trait Handler<T> {
+    fn handle(&self, writer: &mut dyn io::Write, message: Message<T>) -> Result<()>;
+}
+
+impl Handler<Init> for Init {
+    fn handle(&self, writer: &mut dyn io::Write, message: Message<Init>) -> Result<()> {
+        let init_ok = Init::InitOk {
+            in_reply_to: message.body.msg_id.unwrap_or(1),
+        };
+        let message = Message::new(
+            message.dst.clone(),
+            message.src.clone(),
+            Payload {
+                data: init_ok,
+                msg_id: None,
+            },
+        );
+        serde_json::to_writer(&mut *writer, &message)?;
+        writer.write(b"\n")?;
+        Ok(())
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone, Hash, PartialEq, Eq)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Init {
@@ -63,6 +66,17 @@ pub enum Init {
     InitOk {
         in_reply_to: usize,
     },
+}
+
+impl<T> FromStr for Message<T>
+where
+    T: DeserializeOwned,
+{
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        Ok(serde_json::from_str::<Message<T>>(s)?)
+    }
 }
 
 #[cfg(test)]
@@ -85,7 +99,7 @@ mod tests {
         let message = Message::<Init>::new(
             "n1".to_string(),
             "c2".to_string(),
-            Payload::new(init_message),
+            Payload::new(init_message, None),
         );
 
         let serde_message_with_body = serde_json::to_string(&message).unwrap();

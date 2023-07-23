@@ -1,9 +1,11 @@
-use std::str::FromStr;
+#![allow(dead_code)]
+
+use std::io;
 
 use anyhow::Ok;
 use serde::{Deserialize, Serialize};
 
-use crate::message::{self, Handler, Message, ParseError, Payload};
+use crate::message::{self, Handler, Message, Payload};
 
 #[derive(Debug, Serialize, Clone, Deserialize, Hash, PartialEq, Eq)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -22,16 +24,13 @@ impl EchoNode {
         EchoNode { node }
     }
 }
-impl FromStr for Message<Echo> {
-    type Err = anyhow::Error;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        Ok(serde_json::from_str(&s)?)
-    }
-}
 
 impl Handler<Echo> for EchoNode {
-    fn handle(&self, message: &message::Message<Echo>) -> message::Result<Message<Echo>> {
+    fn handle(
+        &self,
+        writer: &mut dyn io::Write,
+        message: message::Message<Echo>,
+    ) -> message::Result<()> {
         let echo_response = Echo::EchoOk {
             echo: match message.body.data {
                 Echo::Echo { ref echo } => echo.clone(),
@@ -40,11 +39,13 @@ impl Handler<Echo> for EchoNode {
             in_reply_to: message.body.msg_id.unwrap_or(1),
         };
         let message = Message::new(
-            message.dst.clone(),
-            message.src.clone(),
+            message.dst,
+            message.src,
             Payload::new(echo_response, message.body.msg_id),
         );
 
-        Ok(message)
+        serde_json::to_writer(&mut *writer, &message)?;
+        writer.write_all(b"\n")?;
+        Ok(())
     }
 }
